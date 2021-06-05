@@ -8,7 +8,6 @@ Engine_Timber : CroneEngine {
 	var maxSamples = 256;
 	var killDuration = 0.003;
 	var waveformDisplayRes = 60;
-	var fadeTimeGlobal = 0;
 
 	var voiceGroup;
 	var voiceList;
@@ -836,7 +835,7 @@ Engine_Timber : CroneEngine {
 	}
 
 	assignVoice {
-		arg voiceId, sampleId, freq, pitchBendRatio, vel;
+		arg voiceId, sampleId, freq, pitchBendRatio, vel, fadeTime;
 		var voiceToRemove;
 
 		// Remove a voice if ID matches or there are too many
@@ -853,14 +852,14 @@ Engine_Timber : CroneEngine {
 				voiceToRemove.startRoutine.stop;
 				voiceToRemove.startRoutine.free;
 				voiceList.remove(voiceToRemove);
-				this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, false);
+				this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, false, fadeTime);
 			}, {
 				voiceToRemove.theSynth.set(\killGate, 0);
 				voiceList.remove(voiceToRemove);
-				this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, true);
+				this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, true, fadeTime);
 			});
 		}, {
-			this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, false);
+			this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, false, fadeTime);
 		});
 	}
 
@@ -974,7 +973,7 @@ Engine_Timber : CroneEngine {
 				\ampModLfo1, sample.ampModLfo1,
 				\ampModLfo2, sample.ampModLfo2,
 
-				\fadeTime, fadeTimeGlobal,
+				\fadeTime, fadeTime,
 
 			], target: voiceGroup).onFree({
 
@@ -1037,7 +1036,7 @@ Engine_Timber : CroneEngine {
 		});
 
 		// noteOn(id, freq, vel, sampleId)
-		this.addCommand(\noteOn, "iffi", {
+		this.addCommand(\noteOn, "iffif", {
 			arg msg;
 			var id = msg[1], freq = msg[2], vel = msg[3] ?? 1, sampleId = msg[4] ?? 0,
 			sample = samples[sampleId];
@@ -1045,12 +1044,12 @@ Engine_Timber : CroneEngine {
 			// debugBuffer.zero();
 
 			if(sample.notNil, {
-				this.assignVoice(id, sampleId, freq, pitchBendAllRatio, vel);
+				this.assignVoice(id, sampleId, freq, pitchBendAllRatio, vel, msg[5]);
 			});
 		});
 
 		// noteOff(id)
-		this.addCommand(\noteOff, "i", {
+		this.addCommand(\noteOff, "if", {
 			arg msg;
 			var voice = voiceList.detect{arg v; v.id == msg[1]};
 			if(voice.notNil, {
@@ -1059,6 +1058,7 @@ Engine_Timber : CroneEngine {
 					voice.startRoutine.free;
 					voiceList.remove(voice);
 				}, {
+					voice.theSynth.set(\fadeTime, msg[2]);
 					voice.theSynth.set(\gate, 0);
 					voice.gate = 0;
 					// Move voice to end so that oldest gate-off voices are found first when stealing
@@ -1402,11 +1402,10 @@ Engine_Timber : CroneEngine {
 			this.setArgOnSample(msg[1], \ampModLfo2, msg[2]);
 		});
 
-		this.addCommand("fadeTime", "f", {
+		this.addCommand("fadeTime", "if", {
 			arg msg;
-			fadeTimeGlobal=msg[1];
+			this.setArgOnSample(msg[1], \fadeTime, msg[2]);
 		});
-
 	}
 
 	free {

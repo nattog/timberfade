@@ -1,5 +1,6 @@
--- Timber Player
+-- Timber Player w/ fades
 -- 1.0.0 Beta 7 @markeats
+-- 0.0.1 @infinitedigits
 -- llllllll.co/t/timber
 --
 -- Trigger samples with a grid
@@ -21,23 +22,24 @@
 --  E2/3 : Params
 --
 
-local Timber = include("timber/lib/timber_engine")
+local Timber = include("lib/timber_engine")
 local MusicUtil = require "musicutil"
 local UI = require "ui"
 local Formatters = require "formatters"
 local BeatClock = require "beatclock"
 
-engine.name = "Timber"
+engine.name = "Timber2"
 
 local options = {}
 options.OFF_ON = {"Off", "On"}
 options.QUANTIZATION = {"None", "1/32", "1/24", "1/16", "1/12", "1/8", "1/6", "1/4", "1/3", "1/2", "1 bar"}
 options.QUANTIZATION_DIVIDERS = {nil, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1}
 
+
 local SCREEN_FRAMERATE = 15
 local screen_dirty = true
 local GRID_FRAMERATE = 30
-local grid_dirty = true
+grid_dirty = true
 local grid_w, grid_h = 16, 8
 
 local midi_in_device
@@ -131,11 +133,11 @@ local function id_to_y(id)
   return math.ceil(id / grid_w)
 end
 
-local function note_on(sample_id, vel)
+local function note_on(sample_id, vel, fadetime)
   if Timber.samples_meta[sample_id].num_frames > 0 then
     -- print("note_on", sample_id)
     vel = vel or 1
-    engine.noteOn(sample_id, MusicUtil.note_num_to_freq(60), vel, sample_id)
+    engine.noteOn(sample_id, MusicUtil.note_num_to_freq(60), vel, sample_id,fadetime)
     sample_status[sample_id] = STATUS.PLAYING
     global_view:add_play_visual()
     screen_dirty = true
@@ -143,9 +145,9 @@ local function note_on(sample_id, vel)
   end
 end
 
-local function note_off(sample_id)
+local function note_off(sample_id,fadetime)
   -- print("note_off", sample_id)
-  engine.noteOff(sample_id)
+  engine.noteOff(sample_id,fadetime)
   screen_dirty = true
   grid_dirty = true
 end
@@ -163,7 +165,7 @@ local function clear_queue()
   note_queue = {}
 end
 
-local function queue_note_event(event_type, sample_id, vel)
+local function queue_note_event(event_type, sample_id, vel, fadetime)
   
   local quant = options.QUANTIZATION_DIVIDERS[params:get("quantization_" .. sample_id)]
   if params:get("quantization_" .. sample_id) > 1 then
@@ -190,6 +192,7 @@ local function queue_note_event(event_type, sample_id, vel)
           event_type = event_type,
           sample_id = sample_id,
           vel = vel,
+          fadetime=fadetime,
           quant = quant
         }
         table.insert(note_queue, note_event)
@@ -204,9 +207,9 @@ local function queue_note_event(event_type, sample_id, vel)
     
   else
     if event_type == "on" then
-      note_on(sample_id, vel)
+      note_on(sample_id, vel,fadetime)
     else
-      note_off(sample_id)
+      note_off(sample_id,fadetime)
     end
   end
   grid_dirty = true
@@ -250,28 +253,33 @@ local function set_pitch_bend_all(bend_st)
   engine.pitchBendAll(MusicUtil.interval_to_ratio(bend_st))
 end
 
-local function key_down(sample_id, vel)
-  
+local function key_down(sample_id, vel, fadetime)
+  if fadetime==nil then 
+    fadetime = 0 
+  end
   if pages.index == 2 then
     sample_setup_view:sample_key(sample_id)
   end
   
   if params:get("launch_mode_" .. sample_id) == 1 then
-    queue_note_event("on", sample_id, vel)
+    queue_note_event("on", sample_id, vel,fadetime)
     
   else
     if (sample_status[sample_id] ~= STATUS.PLAYING and sample_status[sample_id] ~= STATUS.STARTING) or sample_status[sample_id] == STATUS.STOPPING then
-      queue_note_event("on", sample_id, vel)
+      queue_note_event("on", sample_id, vel,fadetime)
     else
-      queue_note_event("off", sample_id)
+      queue_note_event("off", sample_id,nil,fadetime)
     end
   end
   
 end
 
-local function key_up(sample_id)
+local function key_up(sample_id,fadetime)
+  if fadetime==nil then 
+    fadetime=0
+  end
   if params:get("launch_mode_" .. sample_id) == 1 and params:get("play_mode_" .. sample_id) ~= 4 then
-    queue_note_event("off", sample_id)
+    queue_note_event("off", sample_id,nil,fadetime)
   end
 end
 
@@ -287,9 +295,9 @@ local function advance_step()
     local note_event = note_queue[i]
     if tick % (96 / note_event.quant) == 0 then
       if note_event.event_type == "on" then
-        note_on(note_event.sample_id, note_event.vel)
+        note_on(note_event.sample_id, note_event.vel,note_event.fadetime)
       else
-        note_off(note_event.sample_id)
+        note_off(note_event.sample_id,note_event.fadetime)
       end
       table.remove(note_queue, i)
     end
@@ -440,16 +448,41 @@ local function reconnect_midi_ins()
 end
 
 -- Grid event
+local press_time={}
 local function grid_key(x, y, z)
   local sample_id = (y - 1) * grid_w + x - 1
-  if z == 1 then
-    key_down(sample_id)
-    if params:get("follow") == 2 or params:get("follow") == 4 then
-      set_sample_id(sample_id)
-    end
+  if z==1 then
+    press_time[sample_id]={clock.run(function()
+      clock.sleep(0.2)
+	    print("long press")
+	    press_time[sample_id][2]=true
+      key_down(sample_id,nil,params:get("fadetime"))
+      if params:get("follow") == 2 or params:get("follow") == 4 then
+        set_sample_id(sample_id)
+      end
+    end),false}
   else
-    key_up(sample_id)
+  	if not press_time[sample_id][2] then
+    	clock.cancel(press_time[sample_id][1])
+    	print("short press")
+      key_down(sample_id)
+      if params:get("follow") == 2 or params:get("follow") == 4 then
+        set_sample_id(sample_id)
+      end
+    end
   end
+  -- if z == 1 then
+  --   key_down(sample_id)
+  --   if params:get("follow") == 2 or params:get("follow") == 4 then
+  --     set_sample_id(sample_id)
+  --   end
+  -- else
+  --   key_up(sample_id)
+  -- end
+end
+
+local function ct()
+	return clock.get_beats()*clock.get_beat_sec()
 end
 
 local function update()
@@ -459,12 +492,13 @@ local function update()
 end
 
 function grid_redraw()
-  
+
   if grid_device then
     grid_w = grid_device.cols
     grid_h = grid_device.rows
     if grid_w ~= 8 and grid_w ~= 16 then grid_w = 16 end
     if grid_h ~= 8 and grid_h ~= 16 then grid_h = 8 end
+
   end
   
   local leds = {}
@@ -472,9 +506,11 @@ function grid_redraw()
   
   for i = 1, num_leds do
     if sample_status[i - 1] == STATUS.STOPPING then
-      leds[i] = 8
+      -- leds[i] = 8
+      leds[i] = util.round(util.linlin(0,1,4,15,Timber.envamp[i]))
     elseif sample_status[i - 1] == STATUS.STARTING or sample_status[i - 1] == STATUS.PLAYING then
-      leds[i] = 15
+      -- leds[i] = 15
+      leds[i] = util.round(util.linlin(0,1,4,15,Timber.envamp[i]))
     elseif Timber.samples_meta[i - 1].num_frames > 0 then
       leds[i] = 4
     end
@@ -832,6 +868,8 @@ function init()
       params:set("launch_mode_" .. i, 2)
     end
   end}
+
+  params:add{type = "number", id = "fadetime", name = "Fade in/out time", min = 0, max = 30, default = 5}
   
   Timber.add_params()
   params:add_separator()

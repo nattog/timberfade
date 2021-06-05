@@ -35,6 +35,10 @@ Timber.bpm = 120
 Timber.display = "id" -- Can be "id", "note" or "none"
 Timber.shift_mode = false
 Timber.file_select_active = false
+Timber.envamp={}
+for i=1,256 do 
+  Timber.envamp[i]=0
+end
 
 local samples_meta = {}
 local specs = {}
@@ -594,6 +598,13 @@ local function play_position(id, voice_id, position)
   end
 end
 
+local function ampEnvelope(id, voice_id, ae)
+  if ae~=Timber.envamp[id+1] then
+    Timber.envamp[id+1]=ae
+    grid_dirty=true
+  end
+end
+
 local function voice_freed(id, voice_id)
   samples_meta[id].positions[voice_id] = nil
   samples_meta[id].playing = false
@@ -621,6 +632,9 @@ function Timber.osc_event(path, args, from)
     
   elseif path == "/engineVoiceFreed" then
     voice_freed(args[1], args[2])
+    
+  elseif path == "/engineAmpEnvelope" then
+    ampEnvelope(args[1], args[2], args[3])
     
   end
 end

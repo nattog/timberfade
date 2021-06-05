@@ -507,10 +507,10 @@ function grid_redraw()
   for i = 1, num_leds do
     if sample_status[i - 1] == STATUS.STOPPING then
       -- leds[i] = 8
-      leds[i] = util.round(util.linlin(0,1,4,15,Timber.envamp[i]))
+      leds[i] = util.round(util.linlin(0,1,6,15,Timber.envamp[i]))
     elseif sample_status[i - 1] == STATUS.STARTING or sample_status[i - 1] == STATUS.PLAYING then
       -- leds[i] = 15
-      leds[i] = util.round(util.linlin(0,1,4,15,Timber.envamp[i]))
+      leds[i] = util.round(util.linlin(0,1,6,15,Timber.envamp[i]))
     elseif Timber.samples_meta[i - 1].num_frames > 0 then
       leds[i] = 4
     end
@@ -935,5 +935,5 @@ function init()
   
   beat_clock:start()
   
-  params:default()
+  -- params:default()
 end

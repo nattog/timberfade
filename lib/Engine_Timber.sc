@@ -133,7 +133,7 @@ Engine_Timber : CroneEngine {
 		2.do({
 			arg i;
 			players[i] = {
-				arg freqRatio = 1, sampleRate, gate, playMode, voiceId, sampleId, bufnum, numFrames, startFrame, i_lockedStartFrame, endFrame, loopStartFrame, loopEndFrame;
+				arg freqRatio = 1, sampleRate, gate, playMode, voiceId, sampleId, bufnum, numFrames, startFrame, i_lockedStartFrame, endFrame, loopStartFrame, loopEndFrame, fadeTime;
 
 				var signal, progress, phase, offsetPhase, direction, rate, phaseStart, phaseEnd,
 				firstFrame, lastFrame, shouldLoop, inLoop, loopEnabled, loopInf, duckDuration, duckNumFrames, duckNumFramesShortened, duckGate, duckControl;
@@ -150,6 +150,8 @@ Engine_Timber : CroneEngine {
 				progress = (Sweep.ar(1, SampleRate.ir * rate) + i_lockedStartFrame).clip(firstFrame, lastFrame);
 
 				shouldLoop = loopEnabled * gate.max(loopInf);
+//				shouldLoop = Latch.kr(shouldLoop,Impulse.kr(0)+TDelay.kr(Changed.kr(shouldLoop),fadeTime));
+				shouldLoop.poll;
 
 				inLoop = Select.ar(direction > 0, [
 					progress < (loopEndFrame - 40), // NOTE: This tiny offset seems odd but avoids some clicks when phasor start changes
@@ -225,7 +227,7 @@ Engine_Timber : CroneEngine {
 		2.do({
 			arg i;
 			players[i + 2] = {
-				arg freqRatio = 1, sampleRate, gate, playMode, voiceId, sampleId, bufnum, numFrames, i_lockedStartFrame, endFrame, loopStartFrame, loopEndFrame;
+				arg freqRatio = 1, sampleRate, gate, playMode, voiceId, sampleId, bufnum, numFrames, i_lockedStartFrame, endFrame, loopStartFrame, loopEndFrame, fadeTime;
 				var signal, rate, progress, loopEnabled, oneShotActive, duckDuration, duckControl;
 
 				loopEnabled = InRange.kr(playMode, 0, 1);
@@ -303,7 +305,7 @@ Engine_Timber : CroneEngine {
 
 			SynthDef(name, {
 
-				arg out, sampleRate, freq, transposeRatio, detuneRatio = 1, pitchBendRatio = 1, pitchBendSampleRatio = 1, playMode = 0, gate = 0, killGate = 1, vel = 1, pressure = 0, pressureSample = 0, amp = 1,
+				arg out, sampleRate, freq, transposeRatio, detuneRatio = 1, pitchBendRatio = 1, pitchBendSampleRatio = 1, playMode = 0, gate = 0, killGate = 1, vel = 1, pressure = 0, pressureSample = 0, amp = 1, fadeTime=0,
 				lfos, lfo1Fade, lfo2Fade, freqModLfo1, freqModLfo2, freqModEnv, freqMultiplier,
 				ampAttack, ampDecay, ampSustain, ampRelease, modAttack, modDecay, modSustain, modRelease,
 				downSampleTo, bitDepth,
@@ -329,9 +331,9 @@ Engine_Timber : CroneEngine {
 				gate = gate.max(InRange.kr(playMode, 3, 3)); // Ignore gate for one shots
 				killGate = killGate + Impulse.kr(0); // Make sure doneAction fires
 				killEnvelope = EnvGen.ar(envelope: Env.asr(0, 1, killDuration), gate: killGate, doneAction: Done.freeSelf);
-				ampEnvelope = EnvGen.ar(envelope: Env.adsr(ampAttack, ampDecay, ampSustain, ampRelease), gate: gate, doneAction: Done.freeSelf);
+				ampEnvelope = EnvGen.ar(envelope: Env.adsr(ampAttack+fadeTime, ampDecay, ampSustain, ampRelease+fadeTime), gate: gate, doneAction: Done.freeSelf);
 				modEnvelope = EnvGen.ar(envelope: Env.adsr(modAttack, modDecay, modSustain, modRelease), gate: gate);
-        
+
 				// Freq modulation
 				freqModRatio = 2.pow((lfo1 * freqModLfo1) + (lfo2 * freqModLfo2) + (modEnvelope * freqModEnv));
 				freq = freq * transposeRatio * detuneRatio;
@@ -339,7 +341,7 @@ Engine_Timber : CroneEngine {
 				freqRatio = (freq / i_origFreq) * freqMultiplier;
 
 				// Player
-				signal = SynthDef.wrap(players[i], [\kr, \kr, \kr, \kr], [freqRatio, sampleRate, gate, playMode]);
+				signal = SynthDef.wrap(players[i], [\kr, \kr, \kr, \kr, \kr], [freqRatio, sampleRate, gate, playMode, fadeTime]);
 
 				// Downsample and bit reduction
 				if(i > 1, { // Streaming
@@ -853,6 +855,7 @@ Engine_Timber : CroneEngine {
 				voiceList.remove(voiceToRemove);
 				this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, false);
 			}, {
+				"killed!".postln;
 				voiceToRemove.theSynth.set(\killGate, 0);
 				voiceList.remove(voiceToRemove);
 				this.addVoice(voiceId, sampleId, freq, pitchBendAllRatio, vel, true);
@@ -1051,12 +1054,18 @@ Engine_Timber : CroneEngine {
 			var voice = voiceList.detect{arg v; v.id == msg[1]};
 			if(voice.notNil, {
 				if(voice.startRoutine.notNil, {
+					"stopping routine".postln;
 					voice.startRoutine.stop;
 					voice.startRoutine.free;
 					voiceList.remove(voice);
 				}, {
+					"freeing synth".postln;
 					voice.theSynth.set(\gate, 0);
-					voice.gate = 0;
+					voice.gate=0;
+					// Routine({
+					// 	10.wait;
+					// 	voice.gate = 0;
+					// });
 					// Move voice to end so that oldest gate-off voices are found first when stealing
 					voiceList.remove(voice);
 					voiceList.add(voice);

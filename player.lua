@@ -1,5 +1,5 @@
 -- Timber Player
--- 1.0.0 Beta 7 @markeats
+-- 1.1.0 Beta 7 @markeats @id
 -- llllllll.co/t/timber
 --
 -- Trigger samples with a grid
@@ -442,6 +442,7 @@ end
 -- Grid event
 local function grid_key(x, y, z)
   local sample_id = (y - 1) * grid_w + x - 1
+  -- print("pressed sampled "..sample_id)
   if z == 1 then
     key_down(sample_id)
     if params:get("follow") == 2 or params:get("follow") == 4 then
@@ -897,4 +898,6 @@ function init()
   
   beat_clock:start()
   
+  -- dev
+  params:default()
 end

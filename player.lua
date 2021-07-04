@@ -1,6 +1,8 @@
--- Timber Player w/ fades
+-- Timber Player w/ fades + grid param control
 -- 1.0.0 Beta 7 @markeats
 -- 0.0.1 @infinitedigits
+-- customised by @nattog
+--
 -- llllllll.co/t/timber
 --
 -- Trigger samples with a grid
@@ -41,12 +43,16 @@ local screen_dirty = true
 local GRID_FRAMERATE = 30
 grid_dirty = true
 local grid_w, grid_h = 16, 8
+local grid_quiet_select = false
+local grid_editing = false
+local edit_dirty = true
 
 local midi_in_device
 local midi_clock_in_device
 local grid_device
 
-local NUM_SAMPLES = 256
+
+local NUM_SAMPLES = 112
 
 local beat_clock
 local note_queue = {}
@@ -71,6 +77,14 @@ local lfos_view
 local mod_matrix_view
 
 local current_sample_id = 0
+local editing_controls = {
+  volume = 0,
+  pan = 0,
+  pitch = 0,
+  filter_freq = 2,
+  filter_resonance = 0,
+  filter_type = 1,
+}
 local shift_mode = false
 local file_select_active = false
 
@@ -97,7 +111,7 @@ local function load_folder(file, add)
   for k, v in ipairs(Timber.FileSelect.list) do
     if v == file then found = true end
     if found then
-      if sample_id > 255 then
+      if sample_id > NUM_SAMPLES then
         print("Max files loaded")
         break
       end
@@ -113,6 +127,18 @@ local function load_folder(file, add)
   end
 end
 
+local function set_edit_controls(id) 
+    editing_controls = {
+    volume = util.round(util.linlin(-48, 16, 1, 16, params:get('amp_' .. current_sample_id))),
+    pan = util.round(util.linlin(-1, 1, 1, 16, params:get('pan_' .. current_sample_id))),
+    pitch = util.round(util.linlin(-48, 48, 5, 13, params:get('transpose_' .. current_sample_id))),
+    filter_freq = util.round(util.explin(20, 20000, 1, 16, params:get('filter_freq_' .. current_sample_id))),
+    filter_resonance = util.round(util.linlin(0, 1, 1, 16, params:get("filter_resonance_" .. current_sample_id))),
+    filter_type = params:get('filter_type_' .. current_sample_id),
+  }
+
+end
+
 local function set_sample_id(id)
   current_sample_id = id
   while current_sample_id >= NUM_SAMPLES do current_sample_id = current_sample_id - NUM_SAMPLES end
@@ -124,6 +150,8 @@ local function set_sample_id(id)
   mod_env_view:set_sample_id(current_sample_id)
   lfos_view:set_sample_id(current_sample_id)
   mod_matrix_view:set_sample_id(current_sample_id)
+  edit_dirty = true
+
 end
 
 local function id_to_x(id)
@@ -286,6 +314,16 @@ end
 
 -- Clock callbacks
 
+function smooth_value(current_value,next_value, callback)
+  local delta = math.abs(next_value - current_value) / 32
+  local direction = current_value > next_value and -1 or 1
+  for i=1,32 do
+    clock.sync(1/48)
+    local increment = (delta * i) * direction
+    callback(current_value + increment)
+  end
+end
+
 local function advance_step()
   
   local tick = (beat_clock.beat * 24) + beat_clock.step -- 0-95
@@ -349,6 +387,10 @@ function enc(n, delta)
     
   end
   screen_dirty = true
+  if grid_editing then
+    edit_dirty = true
+    grid_dirty = true
+  end
 end
 
 -- Key input
@@ -387,6 +429,8 @@ function key(n, z)
   end
   
   screen_dirty = true
+  edit_dirty = true
+  grid_dirty = true
 end
 
 -- MIDI input
@@ -450,35 +494,109 @@ end
 -- Grid event
 local press_time={}
 local function grid_key(x, y, z)
-  local sample_id = (y - 1) * grid_w + x - 1
-  if z==1 then
-    press_time[sample_id]={clock.run(function()
-      clock.sleep(0.2)
-	    print("long press")
-	    press_time[sample_id][2]=true
-      key_down(sample_id,nil,params:get("fadetime"))
-      if params:get("follow") == 2 or params:get("follow") == 4 then
-        set_sample_id(sample_id)
+  if y == 8 then
+    -- toggle edit view
+    if x == 16 then
+      grid_quiet_select = not grid_quiet_select
+      grid_editing = false
+      grid_dirty = true
+    end
+    if x == 15 and z == 1 then
+        grid_editing = not grid_editing
+        grid_dirty = true
+    end
+  else 
+    
+    if grid_editing then
+      if z==1 then
+        if y == 1 then
+          local current = params:get("amp_" .. current_sample_id)
+          clock.run(smooth_value, current, util.linlin(1, 16, -48, 16, x), function(value) 
+            params:set("amp_"..current_sample_id, value) 
+            grid_dirty = true
+            edit_dirty = true
+          end)
+          
+        end
+        if y == 2 then
+          local current = params:get("pan_" .. current_sample_id)
+          clock.run(smooth_value, current, util.linlin(1, 16, -1, 1, x), function(value) 
+            params:set("pan_"..current_sample_id, value) 
+            grid_dirty = true
+            edit_dirty = true
+          end)
+        end
+        if y == 3 and x >= 5 and x<= 13 then
+          local current = params:get("transpose_" .. current_sample_id)
+          local oct = (x - 9) * 12
+          
+          clock.run(smooth_value, current, oct, function(value) 
+            params:set("transpose_"..current_sample_id, value) 
+            grid_dirty = true
+            edit_dirty = true
+          end)
+        end
+        if y == 4 then
+          local current = params:get("filter_freq_" .. current_sample_id)
+          clock.run(smooth_value, current, util.linexp(1, 16, 20, 20000, x), function(value) 
+            params:set("filter_freq_"..current_sample_id, value) 
+            grid_dirty = true
+            edit_dirty = true
+          end)
+        end
+        if y == 5 then
+          local current = params:get("filter_resonance_" .. current_sample_id)
+          clock.run(smooth_value, current, util.linlin(1, 16, 0, 1, x), function(value) 
+            params:set("filter_resonance_"..current_sample_id, value) 
+            grid_dirty = true
+            edit_dirty = true
+          end)
+        end
+        if y == 6 then
+          local current = params:get("filter_type_" .. current_sample_id)
+          params:set("filter_type_" .. current_sample_id, x > 9 and 1 or 2)
+        end
+        grid_dirty = true
+        edit_dirty = true
       end
-    end),false}
-  else
-  	if not press_time[sample_id][2] then
-    	clock.cancel(press_time[sample_id][1])
-    	print("short press")
-      key_down(sample_id)
-      if params:get("follow") == 2 or params:get("follow") == 4 then
-        set_sample_id(sample_id)
+      return 
+    end
+    
+    
+    local sample_id = (y - 1) * grid_w + x - 1
+    if grid_quiet_select == true then
+      set_sample_id(sample_id)    
+    elseif z==1 then
+      
+      
+      press_time[sample_id]={clock.run(function()
+        clock.sleep(0.2)
+  	    print("long press")
+  	    press_time[sample_id][2]=true
+        key_down(sample_id,nil,params:get("fadetime"))
+        if params:get("follow") == 2 or params:get("follow") == 4 then
+          set_sample_id(sample_id)
+        end
+      end),false}
+    else
+    	if not press_time[sample_id][2] then
+      	clock.cancel(press_time[sample_id][1])
+      	print("short press")
+        key_down(sample_id)
+        if params:get("follow") == 2 or params:get("follow") == 4 then
+          set_sample_id(sample_id)
+        end
       end
     end
+    -- if z == 1 then
+    --   key_down(sample_id)
+    --   if params:get("follow") == 2 or params:get("follow") == 4 then
+    --     set_sample_id(sample_id)
+    --   end
+    -- else
+    --   key_up(sample_id)
+    -- end
   end
-  -- if z == 1 then
-  --   key_down(sample_id)
-  --   if params:get("follow") == 2 or params:get("follow") == 4 then
-  --     set_sample_id(sample_id)
-  --   end
-  -- else
-  --   key_up(sample_id)
-  -- end
 end
 
 local function ct()
@@ -490,6 +608,8 @@ local function update()
   waveform_view:update()
   lfos_view:update()
 end
+
+
 
 function grid_redraw()
 
@@ -504,15 +624,40 @@ function grid_redraw()
   local leds = {}
   local num_leds = grid_w * grid_h
   
+  leds[127] = grid_editing and 15 or 5
+  leds[128] = grid_quiet_select and 15 or 5
+
   for i = 1, num_leds do
-    if sample_status[i - 1] == STATUS.STOPPING then
-      -- leds[i] = 8
-      leds[i] = util.round(util.linlin(0,1,6,15,Timber.envamp[i]))
-    elseif sample_status[i - 1] == STATUS.STARTING or sample_status[i - 1] == STATUS.PLAYING then
-      -- leds[i] = 15
-      leds[i] = util.round(util.linlin(0,1,6,15,Timber.envamp[i]))
-    elseif Timber.samples_meta[i - 1].num_frames > 0 then
-      leds[i] = 4
+
+    -- volume display
+    if grid_editing  == true then
+      if i < 17 then 
+        leds[i] = i == editing_controls.volume and 15 or 0
+      elseif i >= 17 and i < 33 then
+        leds[i] = i - 16 == editing_controls.pan and 15 or 0
+      elseif i >= 33 and i < 49 then
+        leds[i] = i - 32 == editing_controls.pitch and 15 or 0  
+      elseif i >= 49 and i < 65 then
+        leds[i] = i - 48 == editing_controls.filter_freq and 15 or 0
+      elseif i >= 65 and i < 81 then
+        leds[i] = i - 64 == editing_controls.filter_resonance and 15 or 0
+      elseif i >= 81 and i < 97 then
+        if editing_controls.filter_type == 2 then
+          leds[i] = (i - 80 < 9) and 13 or 0
+        else 
+          leds[i] = i - 80 > 9 and 13 or 0
+        end
+      end
+    else 
+      if sample_status[i - 1] == STATUS.STOPPING then
+        -- leds[i] = 8
+        leds[i] = util.round(util.linlin(0,1,6,15,Timber.envamp[i]))
+      elseif sample_status[i - 1] == STATUS.STARTING or sample_status[i - 1] == STATUS.PLAYING then
+        -- leds[i] = 15
+        leds[i] = util.round(util.linlin(0,1,6,15,Timber.envamp[i]))
+      elseif Timber.samples_meta[i - 1].num_frames > 0 then
+        leds[i] = 4
+      end
     end
   end
   
@@ -522,6 +667,8 @@ function grid_redraw()
   end
   grid_device:refresh()
 end
+
+
 
 
 local function callback_set_screen_dirty(id)
@@ -876,7 +1023,7 @@ function init()
   -- Index zero to align with MIDI note numbers
   for i = 0, NUM_SAMPLES - 1 do
     local extra_params = {
-      {type = "option", id = "launch_mode_" .. i, name = "Launch Mode", options = {"Gate", "Toggle"}, default = 1, action = function(value)
+      {type = "option", id = "launch_mode_" .. i, name = "Launch Mode", options = {"Gate", "Toggle"}, default = 2, action = function(value)
         Timber.setup_params_dirty = true
       end},
       {type = "option", id = "quantization_" .. i, name = "Quantization", options = options.QUANTIZATION, default = 1, action = function(value)
@@ -916,6 +1063,11 @@ function init()
   local screen_redraw_metro = metro.init()
   screen_redraw_metro.event = function()
     update()
+    if edit_dirty then 
+      set_edit_controls()
+      edit_dirty = false
+    end
+    
     if screen_dirty then
       redraw()
       screen_dirty = false
@@ -924,10 +1076,16 @@ function init()
   
   local grid_redraw_metro = metro.init()
   grid_redraw_metro.event = function()
+    if edit_dirty then 
+      set_edit_controls()
+      edit_dirty = false
+    end
+    
     if grid_dirty and grid_device.device then
       grid_dirty = false
       grid_redraw()
     end
+    
   end
   
   screen_redraw_metro:start(1 / SCREEN_FRAMERATE)
